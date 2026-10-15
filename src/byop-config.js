@@ -6,5 +6,5 @@
 //
 // The real key must be registered for redirect URI:
 //   https://patbing.github.io/trolley-match/   (EXACT, both authorize+exchange)
-export const BYOP_CLIENT_ID = 'pk_PLACEHOLDER';
+export const BYOP_CLIENT_ID = 'pk_lZejHpAQ5nNYSREk';
 export const BYOP_REDIRECT_URI = 'https://patbing.github.io/trolley-match/';
