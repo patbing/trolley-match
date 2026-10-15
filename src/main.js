@@ -198,15 +198,6 @@ function firstIncompleteRound() {
   return 0;
 }
 
-// Whether the saved run has anything worth resuming (a choice or an answer).
-function hasSavedProgress() {
-  const saved = readSavedProgress();
-  if (!saved || !saved.snap) return false;
-  const snap = saved.snap;
-  return (Array.isArray(snap.player) && snap.player.some((c) => c === 'pull' || c === 'hold')) ||
-    (Array.isArray(snap.okResults) && snap.okResults.length > 0);
-}
-
 function abortInFlight() {
   if (aborter) {
     try { aborter.abort(); } catch (_) { /* ignore */ }
@@ -221,6 +212,7 @@ function abortInFlight() {
 // Player choices and cached Jev answers stay in the in-memory game.
 function disconnect() {
   uiGen += 1; // invalidate any in-flight round flow (stale-render guard)
+  // NOTE: navigation intentionally leaves callBusy set — one tap right after Back/Next/Disconnect is swallowed until the stale runLoop settles in its finally (self-recovers; clearing here would race the finally).
   abortInFlight();
   try { keyStore.clear(); } catch (_) { /* ignore */ }
   try { clearTransaction(defaultByopStore()); } catch (_) { /* ignore */ }
@@ -598,13 +590,8 @@ function bindRound(i, phase) {
       if (effect !== 'pull' && effect !== 'hold') return;
       game.commitPlayer(i, effect);
       saveProgress();
-      // A choice tap on a failed round is a retry request, not a fresh run:
-      // route to retryRound so only the failed call(s) are re-sent and the
-      // tap is never a silent no-op on the cached failure.
-      if (phase === 'failed') {
-        void retryRound(i);
-        return;
-      }
+      // Failed screens keep choices disabled — the Retry button is the single
+      // retry path (retryRound); a choice tap always starts runRound.
       void runRound(i);
     });
   });
@@ -860,10 +847,12 @@ async function boot() {
   // Mid-run resume: a full-page OAuth redirect lands back here with the
   // in-memory game gone but the tab-storage progress intact. Rehydrate first
   // so the callback path (and the plain reload path) continue the run.
-  restoreSavedProgress();
+  // Resume is judged on RESTORED counts, not raw storage length — tampered or
+  // foreign entries (e.g. okResults:[{}]) restore to zero and fall to intro.
+  const restored = restoreSavedProgress();
   if (params) {
     await finishCallback(params);
-  } else if (hasSavedProgress()) {
+  } else if (restored && (restored.choices + restored.answers) > 0) {
     introStatus = 'Resumed where you left off — answered calls are never re-sent.';
     showRound(roundIndex, game.roundComplete(roundIndex) ? 'reveal' : 'choose');
   } else {

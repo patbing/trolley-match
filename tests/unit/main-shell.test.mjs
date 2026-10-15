@@ -198,7 +198,7 @@ test('shell: rapid double-click fires exactly one billable Jev call', async () =
   assert.ok(app.innerHTML.includes('You chose:'), 'single run still reaches reveal');
 });
 
-test('shell: choice tap on a failed round routes to retry (force, failed-only)', async () => {
+test('shell: retry button on a failed round refetches only the failed call', async () => {
   jevMode = 'net-fail';
   hooks.freshGame();
   hooks.clearSaved();
@@ -208,9 +208,11 @@ test('shell: choice tap on a failed round routes to retry (force, failed-only)',
   assert.ok(app.innerHTML.includes('Retry failed call(s)'), 'failed screen renders');
   const beforeCalls = jevCalls;
   jevMode = 'ok';
-  choiceButtons()[0].click(); // failed-state choice -> must route to retryRound
+  const retry = app.querySelector('[data-act="retry"]');
+  assert.ok(retry, 'retry button is the single retry path on failed screens');
+  retry.click(); // failed-state retry goes through the Retry button (retryRound)
   assert.ok(app.innerHTML.includes('Retrying the failed'),
-    'failed-state tap takes the retry path, not a fresh run');
+    'retry button takes the retry path, not a fresh run');
   await settle();
   assert.equal(jevCalls, beforeCalls + 1, 'exactly one refetch for the failed call');
   assert.ok(app.innerHTML.includes('Agreement:'), 'retry reaches reveal with agreement');
@@ -276,4 +278,27 @@ test('shell: without tab storage the terminal warns that reconnect resets the ru
     jevMode = 'ok';
     hooks.saveKey('sk_test', Date.now() + 3600 * 1000);
   }
+});
+
+test('shell: tampered progress (unrestorable entries) falls back to intro, not resume', async () => {
+  jevMode = 'ok';
+  hooks.freshGame();
+  hooks.clearSaved();
+  // Raw storage claims one answer, but the entry is foreign — restore validates
+  // field-by-field and counts zero. Boot judges on restored counts, so intro.
+  realSession.setItem('trolley-match:progress:v1', JSON.stringify({
+    roundIndex: 0,
+    snap: { v: 1, player: [null, null, null, null, null], okResults: [{}] },
+  }));
+  hooks.freshGame(); // wipe memory, keep storage: the redirect round-trip
+  assert.equal(hooks.state().progress.snap.okResults.length, 1, 'raw storage claims an answer');
+  const res = hooks.restoreSaved();
+  assert.deepEqual([res.choices, res.answers], [0, 0], 'nothing restorable');
+  const wouldResume = !!res && (res.choices + res.answers) > 0; // boot's gate
+  assert.equal(wouldResume, false, 'boot gate stays on intro for tampered data');
+  hooks.showIntro(); // boot's else branch
+  assert.ok(app.innerHTML.includes('Trolley Match'), 'intro renders');
+  assert.ok(!app.innerHTML.includes('Round 1 of'), 'no round screen resumed');
+  assert.ok(!app.innerHTML.includes('Resumed where you left off'), 'no fake resume notice');
+  hooks.clearSaved();
 });
