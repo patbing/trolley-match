@@ -11,7 +11,7 @@
 import { createGame, ordersFor, isTerminalKind } from './game.js';
 import { buildDecisionRequest, JEV_ORDER_A, JEV_ORDER_B } from './jev.js';
 import { buildCostNotice } from './cost.js';
-import { createKeyStore, canStart } from './keyvault.js';
+import { createKeyStore } from './keyvault.js';
 import {
   beginTransaction,
   parseCallback,
@@ -19,6 +19,7 @@ import {
   exchangeCode,
   clearTransaction,
   defaultByopStore,
+  tokenUsable,
 } from './byop.js';
 
 const app = document.getElementById('app');
@@ -31,6 +32,21 @@ let roundIndex = 0;
 let aborter = null;
 let callbackDone = false;
 let introStatus = '';
+// UI generation: bumped on every screen navigation (intro/round/result and
+// disconnect). Async round flows capture it around each await and bail out
+// when stale, so a late promise can never repaint over a screen the player
+// has already left (e.g. intro or disconnect after an OAuth redirect hop).
+let uiGen = 0;
+// Round-call busy flag: runRound/retryRound entry guard so a rapid
+// double-click on a choice (or retry) can never fire two billable Jev calls.
+// This is a UI-layer guard on top of the game-layer in-flight dedup.
+let callBusy = false;
+
+// In-run progress persistence: player selections + successful Jev answers,
+// so a mid-run full-page OAuth redirect resumes where the player was.
+// When tab storage is unavailable there is no fallback that survives the
+// redirect — terminal screens then warn that reconnect resets the run.
+const PROGRESS_ITEM = 'trolley-match:progress:v1';
 
 // ---------- small helpers ----------
 
@@ -76,8 +92,119 @@ function currentKey() {
   return keyStore.load();
 }
 
+// Full key record (token + expiresAt) for expiry gating.
+function currentRecord() {
+  try {
+    return keyStore.loadRecord();
+  } catch (_) {
+    return { token: currentKey(), expiresAt: null };
+  }
+}
+
+// The usable token string, or null when missing/expired. Round flows gate on
+// this (not on the bare non-empty check), so an expired key routes to the
+// reconnect terminal instead of firing doomed calls.
+function usableKey() {
+  const rec = currentRecord();
+  try {
+    if (tokenUsable(rec, Date.now)) return rec.token;
+  } catch (_) { /* fall through */ }
+  return null;
+}
+
 function connected() {
-  return canStart({ token: currentKey() });
+  return usableKey() !== null;
+}
+
+// ---------- run-progress persistence (sessionStorage) ----------
+
+function progressStore() {
+  try {
+    return typeof sessionStorage !== 'undefined' ? sessionStorage : null;
+  } catch (_) {
+    return null; // storage access blocked
+  }
+}
+
+function progressAvailable() {
+  return progressStore() !== null;
+}
+
+// Best-effort write of { roundIndex, snap } after every in-run change.
+// Never throws; a failed write just means the redirect-resume is lost.
+function saveProgress() {
+  try {
+    const store = progressStore();
+    if (!store || !game) return false;
+    store.setItem(PROGRESS_ITEM, JSON.stringify({ roundIndex, snap: game.snapshot() }));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function readSavedProgress() {
+  try {
+    const store = progressStore();
+    if (!store) return null;
+    const raw = store.getItem(PROGRESS_ITEM);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.snap) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Rehydrate in-memory game state from tab storage. Returns { choices,
+// answers } on success, null when nothing usable was saved. Shared by boot()
+// and the test hooks — the single restore path.
+function restoreSavedProgress() {
+  if (!game) return null;
+  const saved = readSavedProgress();
+  if (!saved) return null;
+  let res = null;
+  try {
+    res = game.restore(saved.snap);
+  } catch (_) {
+    return null;
+  }
+  if (!res || !res.ok) return null;
+  if (Number.isInteger(saved.roundIndex) && saved.roundIndex >= 0 &&
+      saved.roundIndex < scenarios.length) {
+    roundIndex = saved.roundIndex;
+  } else {
+    roundIndex = firstIncompleteRound();
+  }
+  return res;
+}
+
+function clearSavedProgress() {
+  try {
+    const store = progressStore();
+    if (store) store.removeItem(PROGRESS_ITEM);
+  } catch (_) { /* ignore */ }
+}
+
+// First round with no complete answer — the resume point after a redirect.
+function firstIncompleteRound() {
+  if (!game) return 0;
+  for (let i = 0; i < scenarios.length; i += 1) {
+    try {
+      if (!game.roundComplete(i)) return i;
+    } catch (_) { /* treat as incomplete */ return i; }
+  }
+  return 0;
+}
+
+// Whether the saved run has anything worth resuming (a choice or an answer).
+function hasSavedProgress() {
+  const saved = readSavedProgress();
+  if (!saved || !saved.snap) return false;
+  const snap = saved.snap;
+  return (Array.isArray(snap.player) && snap.player.some((c) => c === 'pull' || c === 'hold')) ||
+    (Array.isArray(snap.okResults) && snap.okResults.length > 0);
 }
 
 function abortInFlight() {
@@ -93,6 +220,7 @@ function abortInFlight() {
 // Drop credentials: vault token plus any pending OAuth transaction.
 // Player choices and cached Jev answers stay in the in-memory game.
 function disconnect() {
+  uiGen += 1; // invalidate any in-flight round flow (stale-render guard)
   abortInFlight();
   try { keyStore.clear(); } catch (_) { /* ignore */ }
   try { clearTransaction(defaultByopStore()); } catch (_) { /* ignore */ }
@@ -166,7 +294,7 @@ async function finishCallback(params) {
     showIntro();
     return;
   }
-  keyStore.save(ex.token);
+  keyStore.save(ex.token, ex.expiresAt !== undefined ? ex.expiresAt : null);
   if (game) {
     try { game.clearTerminal(); } catch (_) { /* ignore */ }
   }
@@ -195,8 +323,11 @@ async function connect() {
 // ---------- screens ----------
 
 function showIntro() {
+  uiGen += 1;
   abortInFlight();
+  const rec = currentRecord();
   const isConnected = connected();
+  const hadToken = !!(rec && rec.token);
   let body = '<h1 data-focus>Trolley Match</h1>' +
     '<p class="lede">You decide, then Jev decides. Five trolley scenarios, ' +
     'one live decision model, and a head-to-head on whether you agree.</p>' +
@@ -223,8 +354,12 @@ function showIntro() {
   } else {
     body += '<div class="row">' +
       '<button type="button" data-act="connect">Connect with Pollinations</button>' +
-      '</div>' +
-      '<p class="hint">Connect issues a budget-capped key for this tab only. ' +
+      '</div>';
+    if (hadToken) {
+      body += '<p class="status" role="status">Your connection key expired or was rejected. ' +
+        'Reconnect to resume — your saved run is kept in this tab.</p>';
+    }
+    body += '<p class="hint">Connect issues a budget-capped key for this tab only. ' +
       'Starting the run without connecting is not possible — every Jev answer is a live call.</p>';
   }
   body += '<p class="attrib">Scenarios are original wording adapted from trolley-bench themes. ' +
@@ -261,6 +396,7 @@ function progressDots() {
 
 // Round screen. phase: 'choose' | 'loading' | 'reveal' | 'failed' | 'terminal'
 function showRound(i, phase, detail) {
+  uiGen += 1;
   roundIndex = i;
   const sc = scenarios[i];
   if (!sc) {
@@ -402,7 +538,14 @@ function reconnectBlock(detail) {
   } else {
     msg = 'The connection needs attention. Reconnect to resume — your choices are kept.';
   }
-  return '<p class="status" role="alert">' + esc(msg) + '</p>' +
+  // Fallback warning (persist infeasible): without tab storage the in-run
+  // progress cannot survive the full-page reconnect redirect, so say so.
+  let warn = '';
+  if (!progressAvailable()) {
+    warn = '<p class="status" role="alert">Note: tab storage is unavailable in this ' +
+      'browser context, so reconnecting will reset this run — answered rounds cannot be restored.</p>';
+  }
+  return '<p class="status" role="alert">' + esc(msg) + '</p>' + warn +
     '<div class="row"><button type="button" data-act="connect">Reconnect with Pollinations</button>' +
     '<button type="button" data-act="disconnect" class="ghost">Disconnect</button></div>';
 }
@@ -433,19 +576,51 @@ function navBlock(i, phase) {
   return out + '</div></nav>';
 }
 
+// True when the round holds at least one FAILED Jev answer (retryable work
+// exists). Drives the single Cancel binding: cancelling a retry lands back
+// on the failed screen, cancelling a first attempt lands on choose.
+function hasFailedCall(i) {
+  if (!game || !scenarios[i]) return false;
+  try {
+    return ordersFor(scenarios[i]).some((o) => {
+      const r = game.lastResult(i, o);
+      return !!r && r.ok === false;
+    });
+  } catch (_) {
+    return false;
+  }
+}
+
 function bindRound(i, phase) {
   app.querySelectorAll('.choice').forEach((btn) => {
     btn.addEventListener('click', () => {
       const effect = btn.getAttribute('data-effect');
       if (effect !== 'pull' && effect !== 'hold') return;
       game.commitPlayer(i, effect);
+      saveProgress();
+      // A choice tap on a failed round is a retry request, not a fresh run:
+      // route to retryRound so only the failed call(s) are re-sent and the
+      // tap is never a silent no-op on the cached failure.
+      if (phase === 'failed') {
+        void retryRound(i);
+        return;
+      }
       void runRound(i);
     });
   });
+  // The ONLY Cancel binding: every loading render goes through showRound ->
+  // bindRound, so no caller may add its own Cancel listener (that double
+  // binding fired twice and confused the stale-render guard).
   const cancel = app.querySelector('[data-act="cancel"]');
   if (cancel) cancel.addEventListener('click', () => {
     abortInFlight();
-    showRound(i, game.roundComplete(i) ? 'reveal' : 'choose');
+    if (game.roundComplete(i)) {
+      showRound(i, 'reveal');
+    } else if (hasFailedCall(i)) {
+      showRound(i, 'failed', {});
+    } else {
+      showRound(i, 'choose');
+    }
   });
   const retry = app.querySelector('[data-act="retry"]');
   if (retry) retry.addEventListener('click', () => { void retryRound(i); });
@@ -472,105 +647,138 @@ function bindRound(i, phase) {
 
 // Ask Jev for every order this round needs, sequentially so a terminal
 // failure on the first call blocks the second before it can spend.
+//
+// Guards: (a) callBusy entry guard — a rapid double-click lands here twice
+// but only the first run proceeds, so two billable Jev calls can never fire
+// from one gesture (on top of the game-layer in-flight dedup); (b) uiGen
+// stale-render guard — captured after each loading render, checked after
+// each await, so a late promise never repaints over a screen the player has
+// left. aborter is nulled in the finally on EVERY exit path.
 async function runRound(i) {
-  const sc = scenarios[i];
-  const orders = ordersFor(sc);
-  const swap = sc.swapPair === true;
-  abortInFlight();
-  aborter = new AbortController();
-  const key = currentKey();
-  if (!canStart({ token: key })) {
-    showRound(i, 'terminal', { kind: 'no-key', message: 'There is no connection key in this tab.' });
-    return;
-  }
-  for (let k = 0; k < orders.length; k += 1) {
-    const order = orders[k];
-    const progress = swap
-      ? 'Asking Jev live — call ' + (k + 1) + ' of ' + orders.length +
-        ' (' + (order === JEV_ORDER_A ? 'order A' : 'order B') + ')…'
-      : 'Asking Jev live…';
-    showRound(i, 'loading', { message: progress });
-    // The loading render replaces the Cancel button; rebind it to this run.
-    const cancel = app.querySelector('[data-act="cancel"]');
-    if (cancel) cancel.addEventListener('click', () => {
-      abortInFlight();
-      showRound(i, game.roundComplete(i) ? 'reveal' : 'choose');
-    });
-    app.querySelectorAll('.choice').forEach((b) => { b.disabled = true; });
-    const r = await game.requestJev({
-      roundIndex: i, order, key, signal: aborter ? aborter.signal : undefined,
-    });
-    if (!r.ok && (r.kind === 'aborted' || r.stale)) {
-      showRound(i, game.roundComplete(i) ? 'reveal' : 'choose');
+  if (callBusy) return; // a run is already in flight — ignore the extra tap
+  callBusy = true;
+  try {
+    const sc = scenarios[i];
+    if (!sc) {
+      showRound(i, 'choose');
       return;
     }
-    if (!r.ok && isTerminalKind(r.kind)) {
-      if (r.kind === 'auth' || r.kind === 'forbidden') {
-        try { keyStore.clear(); } catch (_) { /* ignore */ }
+    const orders = ordersFor(sc);
+    const swap = sc.swapPair === true;
+    abortInFlight();
+    aborter = new AbortController();
+    const key = usableKey();
+    if (!key) {
+      showRound(i, 'terminal', { kind: 'no-key', message: 'There is no connection key in this tab.' });
+      return;
+    }
+    for (let k = 0; k < orders.length; k += 1) {
+      const order = orders[k];
+      const progress = swap
+        ? 'Asking Jev live — call ' + (k + 1) + ' of ' + orders.length +
+          ' (' + (order === JEV_ORDER_A ? 'order A' : 'order B') + ')…'
+        : 'Asking Jev live…';
+      showRound(i, 'loading', { message: progress });
+      app.querySelectorAll('.choice').forEach((b) => { b.disabled = true; });
+      const myUi = uiGen; // loading render generation; navigation past it stales us
+      const r = await game.requestJev({
+        roundIndex: i, order, key, signal: aborter ? aborter.signal : undefined,
+      });
+      if (myUi !== uiGen) {
+        saveProgress(); // keep the answered cache durable even when leaving
+        return; // player navigated away — leave their screen alone
       }
-      showRound(i, 'terminal', { kind: r.kind, detail: r.detail || null });
-      return;
+      if (!r.ok && (r.kind === 'aborted' || r.stale)) {
+        showRound(i, game.roundComplete(i) ? 'reveal' : 'choose');
+        return;
+      }
+      if (!r.ok && isTerminalKind(r.kind)) {
+        if (r.kind === 'auth' || r.kind === 'forbidden') {
+          try { keyStore.clear(); } catch (_) { /* ignore */ }
+        }
+        showRound(i, 'terminal', { kind: r.kind, detail: r.detail || null });
+        return;
+      }
+      if (!r.ok) {
+        showRound(i, 'failed', { kind: r.kind });
+        return;
+      }
+      saveProgress(); // successful answer is durable for the redirect-resume
     }
-    if (!r.ok) {
-      showRound(i, 'failed', { kind: r.kind });
-      return;
-    }
+    saveProgress();
+    showRound(i, 'reveal');
+  } finally {
+    aborter = null;
+    callBusy = false;
   }
-  aborter = null;
-  showRound(i, 'reveal');
 }
 
 // Retry only the orders that have no successful answer. Successes are
-// cached, so they are never re-sent and never billed twice.
+// cached, so they are never re-sent and never billed twice. Same guards as
+// runRound: busy entry guard, uiGen stale-render guard, finally-nulled
+// aborter, and the single Cancel binding via showRound/bindRound.
 async function retryRound(i) {
-  const sc = scenarios[i];
-  const pending = ordersFor(sc).filter((o) => {
-    const r = game.lastResult(i, o);
-    return !(r && r.ok);
-  });
-  if (pending.length === 0) {
-    showRound(i, 'reveal');
-    return;
-  }
-  abortInFlight();
-  aborter = new AbortController();
-  const key = currentKey();
-  if (!canStart({ token: key })) {
-    showRound(i, 'terminal', { kind: 'no-key', message: 'There is no connection key in this tab.' });
-    return;
-  }
-  for (const order of pending) {
-    showRound(i, 'loading', { message: 'Retrying the failed Jev call…' });
-    const cancel = app.querySelector('[data-act="cancel"]');
-    if (cancel) cancel.addEventListener('click', () => {
-      abortInFlight();
-      showRound(i, 'failed', {});
-    });
-    const r = await game.requestJev({
-      roundIndex: i, order, key,
-      signal: aborter ? aborter.signal : undefined, force: true,
-    });
-    if (!r.ok && (r.kind === 'aborted' || r.stale)) {
-      showRound(i, 'failed', {});
+  if (callBusy) return; // a run is already in flight — ignore the extra tap
+  callBusy = true;
+  try {
+    const sc = scenarios[i];
+    if (!sc) {
+      showRound(i, 'choose');
       return;
     }
-    if (!r.ok && isTerminalKind(r.kind)) {
-      if (r.kind === 'auth' || r.kind === 'forbidden') {
-        try { keyStore.clear(); } catch (_) { /* ignore */ }
+    const pending = ordersFor(sc).filter((o) => {
+      const r = game.lastResult(i, o);
+      return !(r && r.ok);
+    });
+    if (pending.length === 0) {
+      showRound(i, 'reveal');
+      return;
+    }
+    abortInFlight();
+    aborter = new AbortController();
+    const key = usableKey();
+    if (!key) {
+      showRound(i, 'terminal', { kind: 'no-key', message: 'There is no connection key in this tab.' });
+      return;
+    }
+    for (const order of pending) {
+      showRound(i, 'loading', { message: 'Retrying the failed Jev call…' });
+      const myUi = uiGen;
+      const r = await game.requestJev({
+        roundIndex: i, order, key,
+        signal: aborter ? aborter.signal : undefined, force: true,
+      });
+      if (myUi !== uiGen) {
+        saveProgress(); // keep the answered cache durable even when leaving
+        return; // player navigated away — leave their screen alone
       }
-      showRound(i, 'terminal', { kind: r.kind, detail: r.detail || null });
-      return;
+      if (!r.ok && (r.kind === 'aborted' || r.stale)) {
+        showRound(i, 'failed', {});
+        return;
+      }
+      if (!r.ok && isTerminalKind(r.kind)) {
+        if (r.kind === 'auth' || r.kind === 'forbidden') {
+          try { keyStore.clear(); } catch (_) { /* ignore */ }
+        }
+        showRound(i, 'terminal', { kind: r.kind, detail: r.detail || null });
+        return;
+      }
+      if (!r.ok) {
+        showRound(i, 'failed', { kind: r.kind });
+        return;
+      }
+      saveProgress();
     }
-    if (!r.ok) {
-      showRound(i, 'failed', { kind: r.kind });
-      return;
-    }
+    saveProgress();
+    showRound(i, 'reveal');
+  } finally {
+    aborter = null;
+    callBusy = false;
   }
-  aborter = null;
-  showRound(i, 'reveal');
 }
 
 function showResult() {
+  uiGen += 1;
   abortInFlight();
   const s = game.scoreAgreement();
   let body = '<h1 data-focus>Your results</h1>' +
@@ -604,6 +812,7 @@ function showResult() {
   app.querySelector('[data-act="again"]').addEventListener('click', () => {
     game = createGame({ scenarios, fetchImpl: (url, opts) => fetch(url, opts) });
     roundIndex = 0;
+    clearSavedProgress(); // a fresh run starts with no resume state
     showRound(0);
   });
   app.querySelector('[data-act="review"]').addEventListener('click', () => {
@@ -648,11 +857,59 @@ async function boot() {
     return;
   }
   game = createGame({ scenarios, fetchImpl: (url, opts) => fetch(url, opts) });
+  // Mid-run resume: a full-page OAuth redirect lands back here with the
+  // in-memory game gone but the tab-storage progress intact. Rehydrate first
+  // so the callback path (and the plain reload path) continue the run.
+  restoreSavedProgress();
   if (params) {
     await finishCallback(params);
+  } else if (hasSavedProgress()) {
+    introStatus = 'Resumed where you left off — answered calls are never re-sent.';
+    showRound(roundIndex, game.roundComplete(roundIndex) ? 'reveal' : 'choose');
   } else {
     showIntro();
   }
 }
 
 void boot();
+
+// Test hooks for the node fake-DOM suite (tests/unit/main-shell.test.mjs).
+// Production code never touches these: they expose the same restore/intro
+// paths boot() uses so the suite can drive a "redirect" without reloading.
+export const __trolleyTestHooks = {
+  // Fresh in-memory run (same scenarios); tab storage is left untouched so a
+  // test can persist, wipe memory, then restore — the redirect round-trip.
+  freshGame() {
+    abortInFlight();
+    callBusy = false;
+    game = createGame({ scenarios, fetchImpl: (url, opts) => fetch(url, opts) });
+    roundIndex = 0;
+  },
+  restoreSaved() {
+    return restoreSavedProgress();
+  },
+  clearSaved() {
+    clearSavedProgress();
+  },
+  showIntro() {
+    showIntro();
+  },
+  showRound(i, phase) {
+    showRound(i, phase);
+  },
+  saveKey(token, expiresAt) {
+    keyStore.save(token, expiresAt);
+  },
+  clearKey() {
+    try { keyStore.clear(); } catch (_) { /* ignore */ }
+  },
+  state() {
+    return {
+      roundIndex,
+      uiGen,
+      busy: callBusy,
+      connected: connected(),
+      progress: readSavedProgress(),
+    };
+  },
+};

@@ -174,6 +174,51 @@ export function createGame({
     return { ...usage };
   }
 
+  // Persistable run progress: player selections plus SUCCESSFUL Jev answers
+  // only (failures are cheap to reproduce via explicit retry and must never
+  // be mistaken for answered calls). Plain JSON: { v, player, okResults }.
+  // Restoring never re-sends anything — it only rehydrates the caches.
+  function snapshot() {
+    const okResults = [];
+    for (const r of results.values()) {
+      if (r && r.ok === true) okResults.push({ ...r });
+    }
+    return { v: 1, player: player.slice(), okResults };
+  }
+
+  // Rehydrate a snapshot taken by snapshot(). Entries are validated field by
+  // field against the live scenario list (index + scenario id + semantic
+  // action); anything foreign is skipped, never stored. Restored answers
+  // count toward run usage — they were billed to this run, just before a
+  // full-page redirect. Returns counts for the caller to report.
+  function restore(snap) {
+    if (!snap || typeof snap !== 'object') return { ok: false, kind: 'bad-snapshot' };
+    let choices = 0;
+    if (Array.isArray(snap.player)) {
+      snap.player.forEach((c, i) => {
+        if ((c === 'pull' || c === 'hold') && i >= 0 && i < scenarios.length) {
+          player[i] = c;
+          choices += 1;
+        }
+      });
+    }
+    let answers = 0;
+    if (Array.isArray(snap.okResults)) {
+      for (const r of snap.okResults) {
+        if (!r || r.ok !== true) continue;
+        if (!Number.isInteger(r.roundIndex) || typeof r.order !== 'string') continue;
+        if (r.action !== 'pull' && r.action !== 'hold') continue;
+        const sc = scenarios[r.roundIndex];
+        if (!sc || (r.scenarioId !== undefined && r.scenarioId !== sc.id)) continue;
+        results.set(keyOf(r.roundIndex, r.order), { ...r });
+        answers += 1;
+      }
+    }
+    usage.requests += answers;
+    usage.succeeded += answers;
+    return { ok: true, choices, answers };
+  }
+
   // Agreement with Jev over all successfully mapped Jev calls. Rounds the
   // player has not answered yet are excluded (no choice to compare). This is
   // an agreement score — Jev is the comparison subject, not the answer key.
@@ -235,6 +280,8 @@ export function createGame({
     clearTerminal,
     terminalKind,
     getUsage,
+    snapshot,
+    restore,
     scoreAgreement,
     runComplete,
   };

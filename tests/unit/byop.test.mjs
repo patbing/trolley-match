@@ -409,3 +409,33 @@ test('parseCallback: presence, denial, duplicates, error description', () => {
     [true, 'access_denied', 'nope']);
   assert.equal(parseCallback('?state=A&state=B').duplicated, true);
 });
+
+test('11: vault persists token expiresAt; legacy bare tokens still load; gating via tokenUsable', () => {
+  // Expiry-carrying save: token loads bare, record carries expiresAt.
+  const vault = memStore();
+  const ks = createKeyStore(vault);
+  ks.save('sk_new', T + 3600 * 1000);
+  assert.equal(ks.load(), 'sk_new');
+  assert.deepEqual(ks.loadRecord(), { token: 'sk_new', expiresAt: T + 3600 * 1000 });
+  assert.deepEqual(vault.keysUsed(), [VAULT_ITEM]); // still the ONE vault item
+  assert.equal(tokenUsable(ks.loadRecord(), () => T), true);
+  assert.equal(tokenUsable(ks.loadRecord(), () => T + 3600 * 1000), false);
+  // Legacy bare-token shape: no known expiry, usable until proven otherwise.
+  const legacy = memStore();
+  legacy.setItem(VAULT_ITEM, 'sk_legacy');
+  const ksLegacy = createKeyStore(legacy);
+  assert.equal(ksLegacy.load(), 'sk_legacy');
+  assert.deepEqual(ksLegacy.loadRecord(), { token: 'sk_legacy', expiresAt: null });
+  assert.equal(tokenUsable(ksLegacy.loadRecord(), () => T + 10 ** 12), true);
+  // Corrupt JSON never yields a token.
+  const bad = memStore();
+  bad.setItem(VAULT_ITEM, '{oops');
+  assert.equal(createKeyStore(bad).load(), null);
+  assert.deepEqual(createKeyStore(bad).loadRecord(), { token: null, expiresAt: null });
+  // Empty save clears; memory fallback carries the record too.
+  ks.save('');
+  assert.equal(ks.load(), null);
+  const mem = createKeyStore(null);
+  mem.save('sk_mem', T + 60_000);
+  assert.deepEqual(mem.loadRecord(), { token: 'sk_mem', expiresAt: T + 60_000 });
+});

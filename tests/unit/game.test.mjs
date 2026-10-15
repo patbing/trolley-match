@@ -183,3 +183,45 @@ test('validation: bad indexes and actions rejected', () => {
   assert.equal(g.commitPlayer(0, 'maybe').ok, false);
   assert.equal(g.getScenario(9), null);
 });
+
+test('snapshot/restore: progress round-trips through JSON; foreign entries rejected', async () => {
+  const fetchImpl = choiceFetch([{ choice: 'go' }]);
+  const g = createGame({ scenarios: [sc('r1'), sc('r2')], fetchImpl });
+  g.commitPlayer(0, 'pull');
+  await g.requestRound({ roundIndex: 0, key: 'sk_x' });
+  const snap = g.snapshot();
+  assert.equal(snap.v, 1);
+  assert.deepEqual(snap.player, ['pull', null]);
+  assert.equal(snap.okResults.length, 1);
+  assert.equal(snap.okResults[0].action, 'pull');
+  // Wire round-trip exactly as sessionStorage would carry it.
+  const wire = JSON.parse(JSON.stringify(snap));
+  const g2 = createGame({ scenarios: [sc('r1'), sc('r2')], fetchImpl });
+  const res = g2.restore(wire);
+  assert.deepEqual([res.ok, res.choices, res.answers], [true, 1, 1]);
+  assert.equal(g2.playerChoice(0), 'pull');
+  assert.equal(g2.lastResult(0, 'A').action, 'pull');
+  assert.equal(g2.roundComplete(0), true);
+  // Restored answers were billed to the run — usage reflects them.
+  assert.deepEqual(g2.getUsage(), { requests: 1, succeeded: 1, failed: 0 });
+  // A failing round contributes no persistable answer.
+  const bad = await g2.requestJev({ roundIndex: 1, key: '' });
+  assert.equal(bad.ok, false);
+  assert.equal(g2.snapshot().okResults.length, 1);
+  // Foreign snapshot content is skipped, never stored.
+  const g3 = createGame({ scenarios: [sc('r1'), sc('r2')], fetchImpl });
+  const r3 = g3.restore({
+    player: ['maybe', 'pull', 'hold'],
+    okResults: [
+      { ok: true, roundIndex: 5, order: 'A', action: 'pull', scenarioId: 'nope' },
+      { ok: true, roundIndex: 0, order: 'A', action: 'dance', scenarioId: 'r1' },
+      { ok: true, roundIndex: 0, order: 'A', action: 'hold', scenarioId: 'WRONG-ID' },
+      { ok: false, roundIndex: 0, order: 'A', action: 'hold', scenarioId: 'r1' },
+    ],
+  });
+  assert.deepEqual([r3.ok, r3.choices, r3.answers], [true, 1, 0]);
+  assert.equal(g3.playerChoice(0), null);
+  assert.equal(g3.playerChoice(1), 'pull');
+  assert.equal(g3.lastResult(0, 'A'), null);
+  assert.deepEqual(g3.restore(null), { ok: false, kind: 'bad-snapshot' });
+});
