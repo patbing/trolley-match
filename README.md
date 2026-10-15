@@ -1,5 +1,7 @@
 # Trolley Match
 
+[![Made with pollinations.ai](https://raw.githubusercontent.com/pollinations/pollinations/main/packages/ui/src/brand/badge-made-with.svg)](https://pollinations.ai/?ref=badge)
+
 You decide, then Jev decides. A five-scenario trolley-problem game against the
 **live** Pollinations Jev decision model (`POST /alpha/decisions`), entered for
 quest **#17647**.
