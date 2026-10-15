@@ -1,0 +1,13 @@
+{
+  "name": "trolley-match",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "You decide, then Jev decides: a five-scenario trolley-problem game vs the live Jev decision model (Pollinations BYOP).",
+  "scripts": {
+    "validate": "node scripts/validate-scenarios.mjs",
+    "test": "node --test",
+    "check": "npm run validate && npm test",
+    "serve": "python3 -m http.server 8080"
+  }
+}

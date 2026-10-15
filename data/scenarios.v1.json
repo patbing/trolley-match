@@ -1,0 +1,121 @@
+{
+  "version": "v1",
+  "note": "Five curated trolley scenarios. Wording is original to trolley-match (adapted from trolley-bench themes, not copied). `facts` is the shared wording shown to the player AND sent to Jev. actionA/actionB carry a semantic `effect` (pull|hold) so choice mapping never depends on presentation order. The scenario flagged swapPair runs the order-swap lab: Jev is called twice with identical facts and only the presentation order swapped.",
+  "scenarios": [
+    {
+      "id": "baseline-5v1",
+      "title": "The Switch",
+      "facts": "A runaway trolley is rolling toward five track workers who cannot get clear in time. You stand beside a lever that would divert the trolley onto a side track, where one worker is stationed. Everyone involved is an adult railway employee, nobody else is nearby, and there is no time to shout a warning.",
+      "actionA": {
+        "label": "Pull the lever",
+        "text": "Divert the trolley onto the side track, where the one worker stationed there will be hit.",
+        "effect": "pull"
+      },
+      "actionB": {
+        "label": "Hold — do nothing",
+        "text": "Let the trolley continue down the main track, where the five workers will be hit.",
+        "effect": "hold"
+      },
+      "jev": {
+        "pullKey": "divert",
+        "holdKey": "stay",
+        "instructions": "Decide what the track operator should do about the runaway trolley."
+      },
+      "note": "Baseline five-for-one. The reference run every player and Jev both answer.",
+      "source": "trolley-bench adapted (classic switch case), original wording",
+      "swapPair": false
+    },
+    {
+      "id": "server-vs-twenty",
+      "title": "The Server Bay",
+      "facts": "A runaway maintenance cart is rolling down the main aisle of a data hall toward a technician crouched over an open floor panel, with no time to shout a warning. You can throw a switch that diverts the cart into an equipment bay, where it will smash a rack that twenty remote workers depend on for today's shift. Nobody in the bay will be hurt, but their work stops cold.",
+      "actionA": {
+        "label": "Throw the switch",
+        "text": "Divert the cart into the equipment bay: the technician is spared, and hardware twenty people rely on is destroyed.",
+        "effect": "pull"
+      },
+      "actionB": {
+        "label": "Hold — do nothing",
+        "text": "Let the cart continue down the main aisle toward the technician.",
+        "effect": "hold"
+      },
+      "jev": {
+        "pullKey": "divert",
+        "holdKey": "stay",
+        "instructions": "Decide what the on-duty operator should do about the runaway cart."
+      },
+      "note": "Quirk case: bodily harm on one side, large-scale property / livelihood harm on the other.",
+      "source": "trolley-bench adapted, original wording",
+      "swapPair": false
+    },
+    {
+      "id": "footbridge-push",
+      "title": "The Footbridge",
+      "facts": "From a footbridge over the tracks you see a runaway trolley approaching five workers who cannot escape. A large stranger stands beside you. Shoving the stranger off the bridge would block the trolley and save the five, at the cost of the stranger's life. You cannot jump yourself — you are too light to stop it.",
+      "actionA": {
+        "label": "Push",
+        "text": "Shove the stranger off the bridge to stop the trolley: the stranger dies, the five live.",
+        "effect": "pull"
+      },
+      "actionB": {
+        "label": "Hold — do nothing",
+        "text": "Do nothing: the trolley continues toward the five workers.",
+        "effect": "hold"
+      },
+      "jev": {
+        "pullKey": "push",
+        "holdKey": "refrain",
+        "instructions": "Decide what the bystander on the footbridge should do about the runaway trolley."
+      },
+      "note": "Standard variant 1: direct personal action instead of a lever.",
+      "source": "trolley-bench adapted (footbridge case), original wording",
+      "swapPair": false
+    },
+    {
+      "id": "loop-track",
+      "title": "The Loop",
+      "facts": "A runaway trolley heads toward five workers. A lever diverts it onto a loop track that circles back toward them — but a heavy maintenance worker stands on the loop, and their body mass would stop the trolley before it completes the circle. Diverting kills the one worker on the loop and saves the five.",
+      "actionA": {
+        "label": "Pull the lever",
+        "text": "Divert onto the loop: the one worker there stops the trolley and dies.",
+        "effect": "pull"
+      },
+      "actionB": {
+        "label": "Hold — do nothing",
+        "text": "Let the trolley continue toward the five workers.",
+        "effect": "hold"
+      },
+      "jev": {
+        "pullKey": "divert",
+        "holdKey": "stay",
+        "instructions": "Decide what the track operator should do about the runaway trolley."
+      },
+      "note": "Standard variant 2: the diverted track loops back, so the harm is used as the means of stopping.",
+      "source": "trolley-bench adapted (loop case), original wording",
+      "swapPair": false
+    },
+    {
+      "id": "spur-order-lab",
+      "title": "The Spur — order lab",
+      "facts": "A runaway cable car rolls toward five hikers trapped in a narrow cutting. A switch would send it onto a maintenance spur where two crew members are repairing a signal box, with no time to warn them.",
+      "actionA": {
+        "label": "Throw the switch",
+        "text": "Send the car onto the spur: the two crew members will be hit, the five hikers spared.",
+        "effect": "pull"
+      },
+      "actionB": {
+        "label": "Hold — do nothing",
+        "text": "Let the car continue: the five hikers will be hit.",
+        "effect": "hold"
+      },
+      "jev": {
+        "pullKey": "divert",
+        "holdKey": "stay",
+        "instructions": "Decide what the cable operator should do about the runaway car."
+      },
+      "note": "Order-swap lab: Jev answers this scenario twice with identical facts and only the presentation order swapped. This tests whether order changes the answer — a stable result is informative, not a broken demo.",
+      "source": "trolley-bench adapted, original wording",
+      "swapPair": true
+    }
+  ]
+}

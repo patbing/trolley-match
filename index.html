@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trolley Match — you decide, then Jev decides</title>
+<meta name="description" content="A five-scenario trolley-problem game against the live Jev decision model: you commit first, Jev answers the same facts, and you compare agreement — including an order-swap lab.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚃</text></svg>">
+<link rel="stylesheet" href="src/styles.css">
+<script>
+  /* Honest source metadata: how this app relates to Pollinations. */
+  window.TROLLEY_MATCH_SOURCE = {
+    provider: 'pollinations',
+    mode: 'live',
+    homepage: 'https://pollinations.ai',
+    decisions: 'POST https://gen.pollinations.ai/alpha/decisions'
+  };
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">🚃 Trolley Match</div>
+</header>
+<main id="app" aria-live="polite"></main>
+<footer class="foot">
+  <span>Every Jev answer is a live call through your own Pollinations connection — answers are never pre-generated or cached across runs. Scenarios are original wording adapted from trolley-bench themes.</span>
+  <a class="badge" href="https://pollinations.ai/?ref=badge" aria-label="Made with pollinations.ai">
+    <img src="https://raw.githubusercontent.com/pollinations/pollinations/main/packages/ui/src/brand/badge-made-with.svg" alt="Made with pollinations.ai" height="28" referrerpolicy="no-referrer">
+  </a>
+</footer>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

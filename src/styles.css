@@ -1,0 +1,110 @@
+/* Trolley Match: mobile-first, readable without build tools. */
+:root {
+  color-scheme: light dark;
+  --gap: 0.75rem;
+  --max: 42rem;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto;
+  max-width: var(--max);
+  padding: 1rem;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.55;
+}
+.top .brand { font-size: 1.25rem; font-weight: 700; }
+.lede { font-size: 1.05rem; }
+.how { padding-left: 1.25rem; }
+.fair { font-style: italic; }
+.facts {
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin: var(--gap) 0;
+}
+.choices { display: grid; gap: var(--gap); margin: var(--gap) 0; }
+.choice {
+  display: grid;
+  gap: 0.25rem;
+  text-align: left;
+  font-size: 1rem;
+  line-height: 1.45;
+  padding: 0.9rem 1rem;
+  border-radius: 0.6rem;
+  border: 2px solid currentColor;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  min-height: 3rem;
+}
+.choice:disabled { opacity: 0.55; cursor: default; }
+.choice.picked { border-width: 4px; }
+.choice strong { font-size: 1.05rem; }
+.row { display: flex; flex-wrap: wrap; gap: var(--gap); margin: var(--gap) 0; }
+button {
+  font-size: 1rem;
+  padding: 0.7rem 1.1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+button:focus-visible, summary:focus-visible, a:focus-visible {
+  outline: 3px solid currentColor;
+  outline-offset: 2px;
+}
+.ghost { background: none; }
+.status, .fail { font-weight: 600; }
+.agree { font-weight: 700; }
+.split { font-weight: 700; }
+.tally, .hint, .conf, .attrib { font-size: 0.92rem; }
+.cost {
+  border-top: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  padding: 0.25rem 0;
+  margin: var(--gap) 0;
+  font-size: 0.92rem;
+}
+.reveal {
+  border-left: 4px solid currentColor;
+  padding: 0.25rem 0 0.25rem 0.75rem;
+  margin: var(--gap) 0;
+}
+.reveal h3 { margin: 0.25rem 0; }
+.lab {
+  font-weight: 600;
+  border: 1px dashed currentColor;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+}
+.dots { display: flex; gap: 0.4rem; margin: 0.25rem 0; }
+.dot {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  display: inline-block;
+}
+.dot.done { background: currentColor; }
+.dot.now { border-width: 3px; }
+.crumb { margin-bottom: 0; }
+.inspectors { margin: var(--gap) 0; display: grid; gap: 0.5rem; }
+.inspector summary { cursor: pointer; font-weight: 600; }
+.inspector pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.82rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  padding: 0.6rem;
+  max-height: 20rem;
+  overflow: auto;
+}
+.rounds { padding-left: 1.25rem; }
+.foot {
+  margin-top: 2rem;
+  font-size: 0.85rem;
+  display: grid;
+  gap: 0.5rem;
+}
+@media (min-width: 40rem) {
+  .choices { grid-template-columns: 1fr 1fr; }
+}
